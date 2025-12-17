@@ -10,9 +10,10 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# Get the OpenAI API key from environment variable
-openai_api_key = os.getenv("OPENAI_API_KEY")
-
+if "OPENAI_API_KEY" in st.secrets:
+    openai.api_key = st.secrets["OPENAI_API_KEY"]
+else:
+    openai.api_key = os.getenv("OPENAI_API_KEY")
 def chat_with_csv(df, prompt):
     """Use OpenAI to analyze CSV data"""
     if not openai_api_key:
@@ -313,4 +314,5 @@ with col2:
                         st.info("Try selecting different columns or adjusting your filters.")
 
     else:
+
         st.warning("Please upload a CSV file to begin analysis.")
