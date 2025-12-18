@@ -6,9 +6,8 @@ import json
 import os
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from langchain.agents.agent_types import AgentType
-from langchain_experimental.agents.agent_toolkits import create_pandas_dataframe_agent
-from langchain.schema import SystemMessage, HumanMessage
+from langchain_experimental.agents import create_pandas_dataframe_agent
+from langchain_core.messages import SystemMessage, HumanMessage
 
 # Load environment variables from .env file
 load_dotenv()
@@ -37,7 +36,6 @@ def chat_with_csv(df, prompt):
             llm,
             df,
             verbose=True,
-            agent_type=AgentType.OPENAI_FUNCTIONS,
             allow_dangerous_code=True,
             handle_parsing_errors=True
         )
