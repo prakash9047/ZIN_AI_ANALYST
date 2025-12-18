@@ -36,8 +36,7 @@ def chat_with_csv(df, prompt):
             llm,
             df,
             verbose=True,
-            allow_dangerous_code=True,
-            handle_parsing_errors=True
+            allow_dangerous_code=True
         )
         
         # Get natural language response
@@ -200,7 +199,7 @@ with col1:
 with col2:
     if 'data' in locals() and data is not None:
         st.markdown("## Data Preview")
-        st.dataframe(data.head(100), use_container_width=True)
+        st.dataframe(data.head(100), width="stretch")
 
         st.markdown("## Chat with Your Data")
         query_type = st.radio("Select query type:", ["Natural Language", "SQL Query", "Dashboard"])
@@ -322,7 +321,7 @@ with col2:
                             st.plotly_chart(fig, use_container_width=True)
                         
                         st.subheader("Filtered Data Preview")
-                        st.dataframe(filtered_data.head(10))
+                        st.dataframe(filtered_data.head(10), width="stretch")
                         st.write(f"Showing {len(filtered_data)} out of {len(data)} total rows")
                     except Exception as e:
                         st.error(f"Error generating chart: {str(e)}")
