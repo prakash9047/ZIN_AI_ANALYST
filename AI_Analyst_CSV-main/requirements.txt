@@ -2,9 +2,8 @@ streamlit==1.52.2
 pandas==2.2.3
 plotly==5.24.1
 python-dotenv==1.0.1
-langchain==0.3.18
+langchain==0.3.21
 langchain-openai==0.2.14
 langchain-experimental==0.3.4
-langchain-core==0.3.28
 openai==1.59.5
 pandasql==0.7.3
