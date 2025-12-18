@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_experimental.agents import create_pandas_dataframe_agent
-from langchain. agents. agent_types import AgentType
+from langchain.agents.agent_types import AgentType
 from langchain_core.messages import SystemMessage, HumanMessage
 import pandasql as ps
 
@@ -25,7 +25,7 @@ def get_api_key():
             return os.getenv("OPENAI_API_KEY")
         else:
             return None
-    except:
+    except: 
         return None
 
 openai_api_key = get_api_key()
@@ -51,7 +51,7 @@ def chat_with_csv_natural_language(df, prompt):
     if not openai_api_key:
         return "⚠️ Please add your OPENAI_API_KEY", None
     
-    try: 
+    try:
         llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0,
@@ -64,7 +64,7 @@ def chat_with_csv_natural_language(df, prompt):
                 df,
                 verbose=False,
                 allow_dangerous_code=True,
-                agent_type=AgentType. OPENAI_FUNCTIONS,
+                agent_type=AgentType.OPENAI_FUNCTIONS,
                 max_iterations=5,
                 max_execution_time=30,
                 handle_parsing_errors=True
@@ -73,21 +73,21 @@ def chat_with_csv_natural_language(df, prompt):
             result = agent.invoke({"input": prompt})
             
             if isinstance(result, dict):
-                return result.get('output', str(result)), None
-            else: 
+                return result. get('output', str(result)), None
+            else:
                 return str(result), None
                 
         except Exception as agent_error:
             df_info = f"""
 DataFrame Information:
-- Shape: {df.shape[0]} rows, {df.shape[1]} columns
+- Shape: {df. shape[0]} rows, {df.shape[1]} columns
 - Columns: {', '.join(df.columns. tolist())}
 
 Statistical Summary:
 {df.describe().to_string()}
 
 First 5 rows:
-{df. head().to_string()}
+{df.head().to_string()}
 """
             
             fallback_prompt = f"""{df_info}
@@ -172,13 +172,13 @@ Return only the SQL query."""
         
         return sql_query, None
         
-    except Exception as e:
+    except Exception as e: 
         return f"Error:  {str(e)}", str(e)
 
 def generate_sample_charts(data):
     """Generate sample chart configurations"""
     charts = []
-    numeric_columns = data.select_dtypes(include=['int64', 'float64', 'int32', 'float32']).columns. tolist()
+    numeric_columns = data.select_dtypes(include=['int64', 'float64', 'int32', 'float32']).columns.tolist()
     categorical_columns = data.select_dtypes(include=['object', 'category', 'bool']).columns.tolist()
 
     if len(numeric_columns) >= 2:
@@ -228,7 +228,7 @@ with col1:
                         on_bad_lines='skip',
                         encoding_errors='ignore'
                     )
-                    if not data.empty and len(data.columns) > 1:
+                    if not data.empty and len(data. columns) > 1:
                         break
                 except: 
                     continue
@@ -250,18 +250,18 @@ with col1:
                 unique_values = data[column].nunique()
                 null_count = data[column].isnull().sum()
                 
-                st. write(f"**Type:** {col_type}")
+                st.write(f"**Type:** {col_type}")
                 st.write(f"**Unique:** {unique_values}")
                 st.write(f"**Nulls:** {null_count}")
                 
-                if data[column].dtype in ['int64', 'float64', 'int32', 'float32']:
+                if data[column]. dtype in ['int64', 'float64', 'int32', 'float32']:
                     st.write(f"**Min:** {data[column].min()}")
                     st.write(f"**Max:** {data[column].max()}")
                     st.write(f"**Mean:** {data[column].mean():.2f}")
 
 with col2:
     if 'data' in locals() and data is not None:
-        st.markdown("## Data Preview")
+        st. markdown("## Data Preview")
         st.dataframe(data.head(100), use_container_width=True)
 
         st.markdown("## Query Data")
@@ -354,7 +354,7 @@ with col2:
                             st.error(error)
                         
                         if 'sql_history' not in st.session_state:
-                            st.session_state.sql_history = []
+                            st. session_state.sql_history = []
                         st.session_state.sql_history.append({
                             'query': sql_query_input,
                             'success': error is None,
@@ -383,11 +383,11 @@ with col2:
                 for i, (chart_type, x, y) in enumerate(st.session_state.sample_charts):
                     try:
                         fig = None
-                        if chart_type == "Scatter":
+                        if chart_type == "Scatter": 
                             fig = px.scatter(data, x=x, y=y, title=f"{x} vs {y}")
                         elif chart_type == "Line":
                             fig = px. line(data, x=x, y=y, title=f"{x} vs {y}")
-                        elif chart_type == "Bar": 
+                        elif chart_type == "Bar":
                             agg_data = data.groupby(x)[y].mean().reset_index()
                             fig = px.bar(agg_data, x=x, y=y, title=f"{y} by {x}")
                         
@@ -407,7 +407,7 @@ with col2:
             
             with col_chart2:
                 color_col = st.selectbox("Color By:", 
-                    ["None"] + data. columns.tolist(), key="color_select")
+                    ["None"] + data.columns.tolist(), key="color_select")
             
             col_axis1, col_axis2 = st.columns(2)
             
@@ -423,10 +423,10 @@ with col2:
                     color_param = None if color_col == "None" else color_col
                     
                     if chart_type == "Bar":
-                        if data[x_axis].dtype == 'object':
+                        if data[x_axis].dtype == 'object': 
                             agg_data = data.groupby(x_axis)[y_axis].mean().reset_index()
                             fig = px.bar(agg_data, x=x_axis, y=y_axis, color=color_param)
-                        else:
+                        else: 
                             fig = px.bar(data, x=x_axis, y=y_axis, color=color_param)
                     
                     elif chart_type == "Line":
@@ -442,7 +442,7 @@ with col2:
                         else:
                             fig = px.pie(data, names=x_axis, values=y_axis)
                     
-                    elif chart_type == "Area":
+                    elif chart_type == "Area": 
                         fig = px.area(data, x=x_axis, y=y_axis, color=color_param)
                     
                     elif chart_type == "Box": 
@@ -455,11 +455,8 @@ with col2:
                         st.plotly_chart(fig, use_container_width=True)
                     
                 except Exception as e:
-                    st.error(f"Error:  {str(e)}")
+                    st.error(f"Error: {str(e)}")
 
     else:
         st.markdown("### Welcome to CSV Analyzer")
         st.write("Upload a CSV file to get started")
-
-st.markdown("---")
-st.markdown("<div style='text-align: center;'>Built with Streamlit | Powered by OpenAI</div>", unsafe_allow_html=True)
