@@ -6,29 +6,228 @@ import os
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_experimental.agents import create_pandas_dataframe_agent
-from langchain.agents. agent_types import AgentType
 from langchain_core.messages import SystemMessage, HumanMessage
 import pandasql as ps
+import json
 
 # Load environment variables
 load_dotenv()
 
+# HARDCODED API KEY (Replace with your actual key)
+HARDCODED_API_KEY = ""  # Replace this with your actual API key
+
+# Supported languages with their native names
+SUPPORTED_LANGUAGES = {
+    "English": "en",
+    "हिंदी (Hindi)": "hi"
+}
+
+# Language name mapping for LLM
+LANGUAGE_NAMES = {
+    "en": "English",
+    "hi": "Hindi"
+}
+
+# Base English text templates
+BASE_TRANSLATIONS = {
+    "page_title": "CSV Analyzer",
+    "language":  "Language",
+    "api_configured": "✅ API Key Configured",
+    "api_not_found": "❌ API Key Not Found",
+    "upload_csv": "Upload CSV files",
+    "upload_instruction": "Drag and drop CSV files here or click Browse files",
+    "file_limit": "Limit 200MB per file • CSV format only",
+    "select_file": "Select a CSV file",
+    "data_summary": "### Data Summary",
+    "rows":  "Rows",
+    "columns": "Columns",
+    "column_list": "### Columns",
+    "type":  "Type",
+    "unique": "Unique",
+    "nulls": "Nulls",
+    "min": "Min",
+    "max": "Max",
+    "mean": "Mean",
+    "data_preview": "## Data Preview",
+    "query_data": "## Query Data",
+    "natural_language": "Natural Language",
+    "sql_query": "SQL Query",
+    "dashboard": "Dashboard",
+    "ask_question": "Ask a question:",
+    "analyze":  "Analyze",
+    "analyzing": "Analyzing.. .",
+    "answer": "### Answer",
+    "history": "### History",
+    "input_method": "Input method:",
+    "ai_generated": "AI Generated SQL",
+    "write_directly": "Write SQL Directly",
+    "describe_query": "Describe your query:",
+    "generate_sql": "Generate SQL",
+    "generating_sql": "Generating SQL.. .",
+    "generated_sql": "### Generated SQL",
+    "sql_query_label": "SQL Query:",
+    "execute":  "Execute",
+    "clear":  "Clear",
+    "executing": "Executing...",
+    "returned_rows": "Returned {0} rows",
+    "download_results": "Download Results",
+    "query_history": "### Query History",
+    "sample_charts": "### Sample Charts",
+    "custom_chart": "### Custom Chart",
+    "chart_type": "Chart Type:",
+    "color_by": "Color By:",
+    "x_axis":  "X-axis:",
+    "y_axis":  "Y-axis:",
+    "generate_chart": "Generate Chart",
+    "generate_sample":  "Generate Sample Charts",
+    "welcome": "### Welcome to CSV Analyzer",
+    "get_started": "Upload a CSV file to get started",
+    "enter_question": "Please enter a question",
+    "describe_query_prompt": "Please describe what you want to query",
+    "enter_sql":  "Please enter a SQL query",
+    "could_not_read": "Could not read the CSV file",
+    "could_not_generate": "Could not generate {0} chart",
+    "error":  "Error:  {0}",
+    "none": "None",
+    "api_key_info": "💡 Add OPENAI_API_KEY to your . env file or Streamlit secrets",
+    "invalid_api_key": "❌ Invalid API Key.  Please check your OPENAI_API_KEY",
+    "quota_exceeded": "❌ API quota exceeded. Please check your OpenAI account",
+    "browse_files": "Browse files"
+}
+
 # Page configuration
 st.set_page_config(layout='wide', page_title="CSV Analyzer")
 
-# Get API key
+# Enhanced API key function with hardcoded option
 def get_api_key():
-    try:
-        if hasattr(st, 'secrets') and "OPENAI_API_KEY" in st.secrets:
-            return st.secrets["OPENAI_API_KEY"]
-        elif os.getenv("OPENAI_API_KEY"):
-            return os.getenv("OPENAI_API_KEY")
-        else:
-            return None
-    except:  
-        return None
+    """Get OpenAI API key from multiple sources with proper error handling"""
+    api_key = None
+    
+    # Try hardcoded API key first (if not empty)
+    if HARDCODED_API_KEY and HARDCODED_API_KEY.strip():
+        api_key = HARDCODED_API_KEY
+    
+    # Try Streamlit secrets (for deployment)
+    if not api_key:
+        try:
+            if hasattr(st, 'secrets'):
+                if "OPENAI_API_KEY" in st.secrets:
+                    api_key = st.secrets["OPENAI_API_KEY"]
+                elif "openai" in st.secrets and "api_key" in st. secrets["openai"]:
+                    api_key = st.secrets["openai"]["api_key"]
+        except Exception:
+            pass
+    
+    # Try environment variable (for local development)
+    if not api_key:
+        api_key = os.getenv("OPENAI_API_KEY")
+    
+    # Try . env file explicitly
+    if not api_key: 
+        try:
+            from dotenv import dotenv_values
+            env_values = dotenv_values(". env")
+            api_key = env_values.get("OPENAI_API_KEY")
+        except:
+            pass
+    
+    # Clean the API key
+    if api_key:
+        api_key = api_key.strip().strip('"').strip("'")
+    
+    return api_key
 
 openai_api_key = get_api_key()
+
+# Initialize session state
+def initialize_session_state():
+    """Initialize session state variables"""
+    if 'language' not in st.session_state:
+        st.session_state.language = 'en'
+    if 'translations_cache' not in st.session_state:
+        st.session_state.translations_cache = {}
+    if 'nl_history' not in st.session_state:
+        st.session_state.nl_history = []
+    if 'sql_history' not in st.session_state:
+        st.session_state.sql_history = []
+
+initialize_session_state()
+
+# Dynamic translation function using LLM
+def translate_text_llm(text, target_lang="en", _api_key=None):
+    """Translate text using OpenAI LLM with caching"""
+    if not _api_key or target_lang == "en":
+        return text
+    
+    if target_lang not in LANGUAGE_NAMES:
+        return text
+        
+    # Check cache first
+    cache_key = f"{text}_{target_lang}"
+    if cache_key in st.session_state.translations_cache:
+        return st.session_state. translations_cache[cache_key]
+    
+    try:
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0.1,
+            api_key=_api_key,
+            max_tokens=500
+        )
+        
+        target_language_name = LANGUAGE_NAMES[target_lang]
+        
+        response = llm.invoke([
+            SystemMessage(content=f"""You are a professional translator.  Translate the following text to {target_language_name}. 
+Rules:
+1. Only return the translation, nothing else
+2. Maintain the original formatting (like ### for headers)
+3. Keep placeholders like {{0}} unchanged
+4. Preserve technical terms appropriately
+5. Use natural, fluent language"""),
+            HumanMessage(content=text)
+        ])
+        
+        translated_text = response.content. strip()
+        
+        # Cache the translation
+        st.session_state.translations_cache[cache_key] = translated_text
+        
+        return translated_text
+    except Exception: 
+        return text
+
+def get_text(key, lang="en"):
+    """Get translated text based on selected language"""
+    base_text = BASE_TRANSLATIONS. get(key, key)
+    
+    if lang == "en" or not openai_api_key:
+        return base_text
+    
+    return translate_text_llm(base_text, lang, openai_api_key)
+
+# Language selector - FIXED TO UPDATE IMMEDIATELY
+col_lang, col_empty = st.columns([1, 5])
+with col_lang:
+    # Get current language for proper indexing
+    current_lang_index = 0
+    if st.session_state.language == "hi":
+        current_lang_index = 1
+    
+    selected_language = st.selectbox(
+        "Language",  # Keep this in English for consistency
+        options=list(SUPPORTED_LANGUAGES.keys()),
+        index=current_lang_index,
+        key="language_selector"
+    )
+    
+    # Update session state immediately
+    new_lang = SUPPORTED_LANGUAGES[selected_language]
+    if new_lang != st.session_state.language:
+        st. session_state.language = new_lang
+        st.rerun()  # Force rerun to update translations
+
+lang = st.session_state.language
 
 def execute_sql_query(df, sql_query):
     """Execute SQL query on pandas dataframe"""
@@ -37,154 +236,63 @@ def execute_sql_query(df, sql_query):
         if sql_query.endswith(';'):
             sql_query = sql_query[:-1]
         
-        sql_query = sql_query.replace('FROM data', 'FROM df')
-        sql_query = sql_query. replace('from data', 'from df')
-        sql_query = sql_query.replace('FROM Data', 'FROM df')
+        # Replace common table name variations
+        replacements = ['FROM data', 'from data', 'FROM Data', 'FROM df', 'from df']
+        for replacement in replacements:
+            sql_query = sql_query.replace(replacement, 'FROM df')
         
         result = ps.sqldf(sql_query, locals())
         return result, None
-    except Exception as e:   
+    except Exception as e: 
         return None, f"SQL Error: {str(e)}"
 
-def generate_chart_from_data(df, prompt):
-    """Generate chart based on the question"""
+def chat_with_csv_natural_language(df, prompt, language="en"):
+    """Analyze CSV data using natural language with dynamic translation"""
     if not openai_api_key:
-        return None
+        return get_text("api_key_info", language), None
     
     try:
         llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0,
-            api_key=openai_api_key
+            api_key=openai_api_key,
+            max_tokens=1000
         )
         
-        numeric_cols = df.select_dtypes(include=['int64', 'float64', 'int32', 'float32']).columns.tolist()
-        categorical_cols = df.select_dtypes(include=['object', 'category', 'bool']).columns.tolist()
-        
-        chart_prompt = f"""Based on this question, determine if a chart is needed and specify chart details.  
-
-Question: {prompt}
-
-Available columns:  
-Numeric: {', '.join(numeric_cols)}
-Categorical: {', '.join(categorical_cols)}
-
-Respond in this exact format:  
-CHART:  yes/no
-TYPE: bar/line/scatter/pie/histogram/box/none
-X_COLUMN: column_name or none
-Y_COLUMN: column_name or none
-TITLE: chart title or none
-"""
-
-        response = llm.invoke([
-            SystemMessage(content="You are a data visualization expert. "),
-            HumanMessage(content=chart_prompt)
-        ])
-        
-        response_text = response.content. strip()
-        lines = response_text.split('\n')
-        
-        chart_config = {}
-        for line in lines: 
-            if ': ' in line:
-                key, value = line.split(':', 1)
-                chart_config[key. strip()] = value.strip()
-        
-        if chart_config.get('CHART', 'no').lower() != 'yes':
-            return None
-        
-        chart_type = chart_config.get('TYPE', 'none').lower()
-        x_col = chart_config.get('X_COLUMN', 'none')
-        y_col = chart_config.get('Y_COLUMN', 'none')
-        title = chart_config. get('TITLE', 'Chart')
-        
-        if chart_type == 'none' or x_col == 'none':  
-            return None
-        
-        if x_col not in df.columns:
-            return None
-        if y_col != 'none' and y_col not in df.columns:
-            return None
-        
-        fig = None
-        
-        if chart_type == 'bar':
-            if y_col != 'none':
-                if df[x_col].dtype == 'object':
-                    agg_data = df.groupby(x_col)[y_col].mean().reset_index()
-                    fig = px.bar(agg_data, x=x_col, y=y_col, title=title)
-                else:
-                    fig = px.bar(df, x=x_col, y=y_col, title=title)
-            else:
-                value_counts = df[x_col].value_counts().reset_index()
-                value_counts.columns = [x_col, 'count']
-                fig = px.bar(value_counts, x=x_col, y='count', title=title)
-        
-        elif chart_type == 'line':
-            if y_col != 'none':  
-                fig = px.line(df, x=x_col, y=y_col, title=title)
-        
-        elif chart_type == 'scatter':
-            if y_col != 'none': 
-                fig = px.scatter(df, x=x_col, y=y_col, title=title)
-        
-        elif chart_type == 'pie': 
-            if df[x_col].dtype == 'object':
-                if y_col != 'none':  
-                    pie_data = df.groupby(x_col)[y_col].sum().reset_index()
-                    fig = px.pie(pie_data, names=x_col, values=y_col, title=title)
-                else:
-                    value_counts = df[x_col].value_counts().reset_index()
-                    value_counts. columns = [x_col, 'count']
-                    fig = px.pie(value_counts, names=x_col, values='count', title=title)
-        
-        elif chart_type == 'histogram':
-            fig = px.histogram(df, x=x_col, title=title)
-        
-        elif chart_type == 'box':  
-            if y_col != 'none':  
-                fig = px.box(df, x=x_col, y=y_col, title=title)
-            else:
-                fig = px. box(df, y=x_col, title=title)
-        
-        return fig
-        
-    except Exception as e:  
-        return None
-
-def chat_with_csv_natural_language(df, prompt):
-    """Analyze CSV data using natural language"""
-    if not openai_api_key:  
-        return "⚠️ Please add your OPENAI_API_KEY", None
-    
-    try:  
-        llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            temperature=0,
-            api_key=openai_api_key
-        )
+        # Translate prompt to English if needed
+        english_prompt = prompt
+        if language == "hi": 
+            english_prompt = translate_text_llm(prompt, "en", openai_api_key)
         
         try:
+            # Create pandas agent - UPDATED FOR CURRENT LANGCHAIN VERSION
             agent = create_pandas_dataframe_agent(
                 llm,
                 df,
                 verbose=False,
                 allow_dangerous_code=True,
-                agent_type=AgentType. OPENAI_FUNCTIONS,
+                agent_type="openai-tools",  # Updated agent type
                 max_iterations=5,
                 max_execution_time=30,
                 handle_parsing_errors=True
             )
             
-            result = agent.invoke({"input": prompt})
+            result = agent.invoke({"input": english_prompt})
             
+            answer = ""
             if isinstance(result, dict):
-                return result.get('output', str(result)), None
+                answer = result.get('output', str(result))
             else:
-                return str(result), None
+                answer = str(result)
+            
+            # Translate answer back to Hindi if needed
+            if language == "hi": 
+                answer = translate_text_llm(answer, "hi", openai_api_key)
+            
+            return answer, None
                 
-        except Exception as agent_error:
+        except Exception: 
+            # Fallback method
             df_info = f"""
 DataFrame Information:
 - Shape: {df.shape[0]} rows, {df.shape[1]} columns
@@ -194,43 +302,56 @@ Statistical Summary:
 {df.describe().to_string()}
 
 First 5 rows:
-{df. head().to_string()}
+{df.head().to_string()}
 """
             
             fallback_prompt = f"""{df_info}
 
-Question: {prompt}
+Question: {english_prompt}
 
 Please provide a detailed answer based on the data above."""
             
             response = llm.invoke([
-                SystemMessage(content="You are a data analyst.  Provide clear, accurate answers based on the provided dataset."),
+                SystemMessage(content="You are a data analyst. Provide clear, accurate answers based on the provided dataset."),
                 HumanMessage(content=fallback_prompt)
             ])
             
-            return response.content, None
+            answer = response.content
+            
+            # Translate answer back if needed
+            if language == "hi":
+                answer = translate_text_llm(answer, "hi", openai_api_key)
+            
+            return answer, None
         
-    except Exception as e:  
+    except Exception as e: 
         error_msg = str(e)
-        if "401" in error_msg or "invalid_api_key" in error_msg:  
-            return "❌ Invalid API Key", error_msg
-        elif "insufficient_quota" in error_msg:  
-            return "❌ API quota exceeded", error_msg
-        else:  
-            return f"❌ Error: {error_msg}", error_msg
+        if "401" in error_msg or "invalid_api_key" in error_msg or "Incorrect API key" in error_msg: 
+            return get_text("invalid_api_key", language), error_msg
+        elif "insufficient_quota" in error_msg: 
+            return get_text("quota_exceeded", language), error_msg
+        else:
+            return get_text("error", language).format(error_msg), error_msg
 
-def generate_sql_query(df, prompt):
-    """Generate SQL query from natural language"""
-    if not openai_api_key:  
-        return "⚠️ Please add your OPENAI_API_KEY", None
+def generate_sql_query(df, prompt, language="en"):
+    """Generate SQL query from natural language with translation support"""
+    if not openai_api_key:
+        return get_text("api_key_info", language), None
     
     try:
         llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0,
-            api_key=openai_api_key
+            api_key=openai_api_key,
+            max_tokens=500
         )
         
+        # Translate prompt to English if needed
+        english_prompt = prompt
+        if language == "hi":
+            english_prompt = translate_text_llm(prompt, "en", openai_api_key)
+        
+        # Generate column information
         column_info = []
         for col in df.columns:
             dtype = str(df[col].dtype)
@@ -239,48 +360,43 @@ def generate_sql_query(df, prompt):
         
         columns_description = "\n".join(column_info)
         
-        sql_prompt = f"""Generate ONLY a SQL query (no explanation) that answers this question.  
+        sql_prompt = f"""Generate ONLY a SQL query (no explanation) that answers this question. 
 
-Question: {prompt}
+Question: {english_prompt}
 
 Table name: df
 Columns: 
 {columns_description}
 
-Return only the SQL query."""
+Return only the SQL query without any formatting or explanation."""
 
         response = llm.invoke([
-            SystemMessage(content="You are a SQL expert. Generate only SQL queries without explanation."),
+            SystemMessage(content="You are a SQL expert. Generate only clean SQL queries without explanation, code blocks, or formatting. "),
             HumanMessage(content=sql_prompt)
         ])
         
         sql_query = response.content.strip()
         
-        if "```sql" in sql_query:  
+        # Clean up the SQL query
+        if "```sql" in sql_query:
             sql_query = sql_query.split("```sql")[1].split("```")[0].strip()
         elif "```" in sql_query:
-            sql_query = sql_query. split("```")[1].split("```")[0].strip()
+            sql_query = sql_query.split("```")[1].split("```")[0].strip()
         
+        # Remove comments and clean lines
         lines = sql_query.split('\n')
         sql_lines = []
         for line in lines:
             line = line.strip()
-            if line and (line.upper().startswith('SELECT') or 
-                        line.upper().startswith('FROM') or 
-                        line. upper().startswith('WHERE') or 
-                        line.upper().startswith('GROUP') or 
-                        line.upper().startswith('ORDER') or 
-                        line.upper().startswith('HAVING') or
-                        line.upper().startswith('LIMIT') or
-                        (sql_lines and not line.upper().startswith('--'))):
-                sql_lines. append(line)
+            if line and not line.startswith('--') and not line.startswith('/*'):
+                sql_lines.append(line)
         
         sql_query = ' '.join(sql_lines) if sql_lines else sql_query
         
         return sql_query, None
         
-    except Exception as e:  
-        return f"Error:  {str(e)}", str(e)
+    except Exception as e:
+        return f"Error: {str(e)}", str(e)
 
 def generate_sample_charts(data):
     """Generate sample chart configurations"""
@@ -303,23 +419,39 @@ def generate_sample_charts(data):
     return charts[: 3]
 
 # Main layout
-col1, col2 = st. columns([1, 3])
+col1, col2 = st.columns([1, 3])
 
+# FIXED SIDEBAR - Now properly translates
 with col1:
-    st.title("CSV Analyzer")
+    st. title(get_text("page_title", lang))
     st.markdown("---")
     
+    # API Key Status
     if openai_api_key:
-        st.success("✅ API Key Configured")
+        st.success(get_text("api_configured", lang))
     else:
-        st.error("❌ API Key Not Found")
+        st.error(get_text("api_not_found", lang))
+        st.info(get_text("api_key_info", lang))
 
-    input_csvs = st.file_uploader("Upload CSV files", type=['csv'], accept_multiple_files=True)
+    # FIXED FILE UPLOADER with custom instructions
+    st.markdown(f"**{get_text('upload_csv', lang)}**")
+    
+    # Add custom instruction text in the selected language
+    if lang == "hi":
+        st. markdown("📁 *CSV फाइलों को यहाँ खींचें और छोड़ें या Browse files पर क्लिक करें*")
+        st.markdown("*अधिकतम 200MB प्रति फाइल • केवल CSV फॉर्मेट*")
+    else:
+        st.markdown("📁 *Drag and drop CSV files here or click Browse files*")
+        st.markdown("*Limit 200MB per file • CSV format only*")
+    
+    # The actual file uploader (Streamlit's built-in text will remain in English)
+    input_csvs = st.file_uploader("", type=['csv'], accept_multiple_files=True, label_visibility="collapsed")
 
-    if input_csvs:
-        selected_file = st.selectbox("Select a CSV file", [file.name for file in input_csvs])
+    if input_csvs: 
+        selected_file = st.selectbox(get_text("select_file", lang), [file.name for file in input_csvs])
         selected_index = [file.name for file in input_csvs].index(selected_file)
         
+        # Enhanced CSV reading with multiple encodings and delimiters
         encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252', 'windows-1252']
         delimiters = [',', ';', '\t', '|']
         data = None
@@ -327,7 +459,7 @@ with col1:
         for encoding in encodings:
             for delimiter in delimiters:
                 try:
-                    input_csvs[selected_index]. seek(0)
+                    input_csvs[selected_index].seek(0)
                     data = pd.read_csv(
                         input_csvs[selected_index], 
                         encoding=encoding, 
@@ -337,260 +469,259 @@ with col1:
                     )
                     if not data.empty and len(data. columns) > 1:
                         break
-                except:   
+                except: 
                     continue
             if data is not None and not data.empty:
                 break
         
         if data is None or data.empty:
-            st. error("Could not read the CSV file")
+            st.error(get_text("could_not_read", lang))
             st.stop()
 
-        st.markdown("### Data Summary")
-        st.write(f"**Rows:** {data.shape[0]: ,}")
-        st.write(f"**Columns:** {data.shape[1]}")
+        # Data summary
+        st.markdown(get_text("data_summary", lang))
+        st.write(f"**{get_text('rows', lang)}:** {data.shape[0]: ,}")
+        st.write(f"**{get_text('columns', lang)}:** {data.shape[1]}")
         
-        st.markdown("### Columns")
+        # Column information
+        st.markdown(get_text("column_list", lang))
         for column in data.columns:
             with st.expander(column):
                 col_type = str(data[column].dtype)
                 unique_values = data[column].nunique()
                 null_count = data[column].isnull().sum()
                 
-                st.write(f"**Type:** {col_type}")
-                st.write(f"**Unique:** {unique_values}")
-                st.write(f"**Nulls:** {null_count}")
+                st.write(f"**{get_text('type', lang)}:** {col_type}")
+                st.write(f"**{get_text('unique', lang)}:** {unique_values}")
+                st.write(f"**{get_text('nulls', lang)}:** {null_count}")
                 
-                if data[column].dtype in ['int64', 'float64', 'int32', 'float32']:
-                    st.write(f"**Min:** {data[column].min()}")
-                    st.write(f"**Max:** {data[column].max()}")
-                    st.write(f"**Mean:** {data[column].mean():.2f}")
+                # Show statistics for numeric columns
+                if pd.api.types.is_numeric_dtype(data[column]):
+                    try:
+                        st.write(f"**{get_text('min', lang)}:** {data[column].min()}")
+                        st.write(f"**{get_text('max', lang)}:** {data[column].max()}")
+                        mean_val = data[column].mean()
+                        if pd.notna(mean_val):
+                            st.write(f"**{get_text('mean', lang)}:** {mean_val:.2f}")
+                    except: 
+                        pass
 
+# Main content area
 with col2:
     if 'data' in locals() and data is not None:
-        st. markdown("## Data Preview")
-        st.dataframe(data.head(100), use_container_width=True)
+        st.markdown(get_text("data_preview", lang))
+        st.dataframe(data. head(100), use_container_width=True)
 
-        st.markdown("## Query Data")
+        st.markdown(get_text("query_data", lang))
         
-        tab1, tab2, tab3 = st.tabs(["Natural Language", "SQL Query", "Dashboard"])
+        tab1, tab2, tab3 = st.tabs([
+            get_text("natural_language", lang),
+            get_text("sql_query", lang),
+            get_text("dashboard", lang)
+        ])
         
-        # Natural Language Mode
+        # Natural Language Tab
         with tab1:
-            nl_input = st.text_area("Ask a question:", height=100, key="nl_input")
+            nl_input = st.text_area(get_text("ask_question", lang), height=100, key="nl_input")
             
-            if st.button("Analyze", key="nl_button"):
+            if st.button(get_text("analyze", lang), key="nl_button"):
                 if nl_input. strip():
-                    with st.spinner("Analyzing..."):
-                        result, error = chat_with_csv_natural_language(data, nl_input)
+                    with st.spinner(get_text("analyzing", lang)):
+                        result, error = chat_with_csv_natural_language(data, nl_input, lang)
                         
-                        st.markdown("### Answer")
-                        st.write(result)
+                        st.markdown(get_text("answer", lang))
+                        st. write(result)
                         
-                        if 'nl_history' not in st.session_state:
-                            st.session_state. nl_history = []
+                        # Add to history
                         st.session_state.nl_history.append({
                             'question': nl_input,
-                            'answer': result
+                            'answer':  result,
+                            'language': lang
                         })
                 else:
-                    st.warning("Please enter a question")
+                    st.warning(get_text("enter_question", lang))
             
-            if 'nl_history' in st. session_state and st.session_state.nl_history:
+            # Show history
+            if st.session_state.nl_history:
                 st.markdown("---")
-                st.markdown("### History")
+                st.markdown(get_text("history", lang))
                 for i, item in enumerate(reversed(st.session_state.nl_history[-5:])):
                     with st.expander(f"Q{len(st.session_state.nl_history)-i}:  {item['question'][: 50]}..."):
-                        st. write(f"**Q:** {item['question']}")
+                        st.write(f"**Q:** {item['question']}")
                         st.write(f"**A:** {item['answer']}")
         
-        # SQL Query Mode
+        # SQL Query Tab
         with tab2:
-            query_input_method = st.radio("Input method:", ["AI Generated SQL", "Write SQL Directly"], key="sql_method")
+            query_input_method = st.radio(
+                get_text("input_method", lang),
+                [get_text("ai_generated", lang), get_text("write_directly", lang)],
+                key="sql_method"
+            )
             
-            if query_input_method == "AI Generated SQL":
-                nl_query = st.text_area("Describe your query:", height=80, key="sql_nl_input")
+            if query_input_method == get_text("ai_generated", lang):
+                nl_query = st.text_area(get_text("describe_query", lang), height=80, key="sql_nl_input")
                 
-                if st. button("Generate SQL", key="gen_sql_button"):
+                if st. button(get_text("generate_sql", lang), key="gen_sql_button"):
                     if nl_query.strip():
-                        with st.spinner("Generating SQL..."):
-                            sql_query, error = generate_sql_query(data, nl_query)
+                        with st.spinner(get_text("generating_sql", lang)):
+                            sql_query, error = generate_sql_query(data, nl_query, lang)
                             
                             if not error:
                                 st.session_state.generated_sql = sql_query
-                                st.markdown("### Generated SQL")
-                                st.code(sql_query, language="sql")
+                                st.markdown(get_text("generated_sql", lang))
+                                st. code(sql_query, language="sql")
                             else:
                                 st.error(sql_query)
-                    else:  
-                        st.warning("Please describe what you want to query")
+                    else: 
+                        st.warning(get_text("describe_query_prompt", lang))
             
+            # SQL Editor
             if 'generated_sql' in st.session_state:
                 default_sql = st.session_state.generated_sql
             else:
                 default_sql = "SELECT * FROM df LIMIT 10"
             
-            sql_query_input = st.text_area("SQL Query:", value=default_sql, height=120, key="sql_editor")
+            sql_query_input = st.text_area(get_text("sql_query_label", lang), value=default_sql, height=120, key="sql_editor")
             
             col_exec, col_clear = st.columns([1, 4])
-            with col_exec:
-                execute_btn = st.button("Execute", key="exec_sql_button", use_container_width=True)
-            with col_clear:  
-                if st.button("Clear", key="clear_sql_button"):
+            with col_exec: 
+                execute_btn = st.button(get_text("execute", lang), key="exec_sql_button", use_container_width=True)
+            with col_clear:
+                if st.button(get_text("clear", lang), key="clear_sql_button"):
                     if 'generated_sql' in st. session_state:
                         del st.session_state.generated_sql
                     st.rerun()
             
-            if execute_btn:  
-                if sql_query_input. strip():
-                    with st. spinner("Executing... "):
+            if execute_btn:
+                if sql_query_input.strip():
+                    with st.spinner(get_text("executing", lang)):
                         result_df, error = execute_sql_query(data, sql_query_input)
                         
-                        if not error:
-                            st.success(f"Returned {len(result_df)} rows")
+                        if not error and result_df is not None: 
+                            st.success(get_text("returned_rows", lang).format(len(result_df)))
                             st.dataframe(result_df, use_container_width=True)
                             
                             csv = result_df.to_csv(index=False)
-                            st.download_button(
-                                label="Download Results",
+                            st. download_button(
+                                label=get_text("download_results", lang),
                                 data=csv,
                                 file_name="query_results.csv",
                                 mime="text/csv"
                             )
-                        else:  
-                            st.error(error)
-                        
-                        if 'sql_history' not in st.session_state:
-                            st.session_state.sql_history = []
-                        st.session_state.sql_history.append({
-                            'query': sql_query_input,
-                            'success': error is None,
-                            'rows':  len(result_df) if result_df is not None else 0
-                        })
-                else:
-                    st.warning("Please enter a SQL query")
+                            
+                            # Add to history
+                            st.session_state.sql_history.append({
+                                'query': sql_query_input,
+                                'success': True,
+                                'rows': len(result_df)
+                            })
+                        else:
+                            st.error(error or "Unknown error occurred")
+                            st.session_state.sql_history.append({
+                                'query': sql_query_input,
+                                'success': False,
+                                'rows': 0
+                            })
+                else: 
+                    st.warning(get_text("enter_sql", lang))
             
-            if 'sql_history' in st.session_state and st.session_state.sql_history:
+            # Show SQL history
+            if st.session_state.sql_history:
                 st.markdown("---")
-                st.markdown("### Query History")
+                st.markdown(get_text("query_history", lang))
                 for i, item in enumerate(reversed(st.session_state.sql_history[-5:])):
                     status = "✅" if item['success'] else "❌"
                     with st. expander(f"{status} Query {len(st.session_state.sql_history)-i}"):
                         st.code(item['query'], language="sql")
                         if item['success']:
-                            st.write(f"Returned {item['rows']} rows")
+                            st.write(get_text("returned_rows", lang).format(item['rows']))
         
-        # Dashboard Mode
+        # Dashboard Tab
         with tab3:
-            st.markdown("### Chart Generation Method")
-            chart_method = st.radio("Select method:", ["Natural Language", "Manual Selection"], key="chart_method")
-            
-            if chart_method == "Natural Language":
-                nl_chart_input = st.text_area("Describe the chart you want:", height=100, key="nl_chart_input")
-                
-                if st.button("Generate Chart from Question", key="nl_chart_button"):
-                    if nl_chart_input.strip():
-                        with st.spinner("Generating chart..."):
-                            # Get answer
-                            result, error = chat_with_csv_natural_language(data, nl_chart_input)
-                            
-                            st.markdown("### Answer")
-                            st.write(result)
-                            
-                            # Generate chart
-                            if not error:
-                                fig = generate_chart_from_data(data, nl_chart_input)
-                                if fig:
-                                    st. markdown("### Chart")
-                                    st.plotly_chart(fig, use_container_width=True)
-                                else:
-                                    st.info("No chart generated for this question")
-                    else:
-                        st.warning("Please describe the chart you want")
-            
-            else:  # Manual Selection
-                if 'sample_charts' not in st.session_state or st.button("Generate Sample Charts"):
-                    st.session_state.sample_charts = generate_sample_charts(data)
+            if 'sample_charts' not in st.session_state or st.button(get_text("generate_sample", lang)):
+                st.session_state.sample_charts = generate_sample_charts(data)
 
-                if st.session_state.sample_charts:
-                    st.markdown("### Sample Charts")
-                    for i, (chart_type, x, y) in enumerate(st.session_state.sample_charts):
-                        try:
-                            fig = None
-                            if chart_type == "Scatter":  
-                                fig = px.scatter(data, x=x, y=y, title=f"{x} vs {y}")
-                            elif chart_type == "Line":
-                                fig = px.line(data, x=x, y=y, title=f"{x} vs {y}")
-                            elif chart_type == "Bar":
-                                agg_data = data.groupby(x)[y].mean().reset_index()
-                                fig = px.bar(agg_data, x=x, y=y, title=f"{y} by {x}")
-                            
-                            if fig:
-                                st.plotly_chart(fig, use_container_width=True)
-                        except Exception as e:
-                            st.warning(f"Could not generate {chart_type} chart")
-
-                st.markdown("---")
-                st.markdown("### Custom Chart")
-                
-                col_chart1, col_chart2 = st.columns(2)
-                
-                with col_chart1:
-                    chart_type = st.selectbox("Chart Type:", 
-                        ["Bar", "Line", "Scatter", "Pie", "Area", "Box", "Histogram"])
-                
-                with col_chart2:
-                    color_col = st.selectbox("Color By:", 
-                        ["None"] + data.columns.tolist(), key="color_select")
-                
-                col_axis1, col_axis2 = st.columns(2)
-                
-                with col_axis1:
-                    x_axis = st.selectbox("X-axis:", data.columns, key="x_axis_dash")
-                
-                with col_axis2:
-                    y_axis = st.selectbox("Y-axis:", data.columns, key="y_axis_dash")
-
-                if st.button("Generate Chart", key="gen_chart_button"):
+            # Sample charts
+            if st.session_state.sample_charts:
+                st.markdown(get_text("sample_charts", lang))
+                for i, (chart_type, x, y) in enumerate(st.session_state.sample_charts):
                     try:
                         fig = None
-                        color_param = None if color_col == "None" else color_col
-                        
-                        if chart_type == "Bar":
-                            if data[x_axis].dtype == 'object':   
-                                agg_data = data.groupby(x_axis)[y_axis].mean().reset_index()
-                                fig = px.bar(agg_data, x=x_axis, y=y_axis, color=color_param)
-                            else:  
-                                fig = px.bar(data, x=x_axis, y=y_axis, color=color_param)
-                        
-                        elif chart_type == "Line":  
-                            fig = px.line(data, x=x_axis, y=y_axis, color=color_param)
-                        
-                        elif chart_type == "Scatter":   
-                            fig = px.scatter(data, x=x_axis, y=y_axis, color=color_param)
-                        
-                        elif chart_type == "Pie":
-                            if data[x_axis].dtype == 'object':
-                                pie_data = data.groupby(x_axis)[y_axis].sum().reset_index()
-                                fig = px.pie(pie_data, names=x_axis, values=y_axis)
-                            else:
-                                fig = px.pie(data, names=x_axis, values=y_axis)
-                        
-                        elif chart_type == "Area":  
-                            fig = px.area(data, x=x_axis, y=y_axis, color=color_param)
-                        
-                        elif chart_type == "Box":  
-                            fig = px.box(data, x=x_axis, y=y_axis, color=color_param)
-                        
-                        elif chart_type == "Histogram":
-                            fig = px.histogram(data, x=x_axis, color=color_param)
+                        if chart_type == "Scatter":
+                            fig = px.scatter(data, x=x, y=y, title=f"{x} vs {y}")
+                        elif chart_type == "Line":
+                            fig = px.line(data, x=x, y=y, title=f"{x} vs {y}")
+                        elif chart_type == "Bar":
+                            agg_data = data.groupby(x)[y].mean().reset_index()
+                            fig = px.bar(agg_data, x=x, y=y, title=f"{y} by {x}")
                         
                         if fig:
                             st.plotly_chart(fig, use_container_width=True)
-                        
-                    except Exception as e:  
-                        st.error(f"Error:  {str(e)}")
+                    except Exception: 
+                        st.warning(get_text("could_not_generate", lang).format(chart_type))
 
-    else:  
-        st.markdown("### Welcome to CSV Analyzer")
-        st.write("Upload a CSV file to get started")
+            # Custom chart builder
+            st.markdown("---")
+            st.markdown(get_text("custom_chart", lang))
+            
+            col_chart1, col_chart2 = st.columns(2)
+            
+            with col_chart1:
+                chart_type = st. selectbox(get_text("chart_type", lang), 
+                    ["Bar", "Line", "Scatter", "Pie", "Area", "Box", "Histogram"])
+            
+            with col_chart2:
+                color_col = st. selectbox(get_text("color_by", lang), 
+                    [get_text("none", lang)] + data.columns.tolist(), key="color_select")
+            
+            col_axis1, col_axis2 = st.columns(2)
+            
+            with col_axis1:
+                x_axis = st.selectbox(get_text("x_axis", lang), data.columns, key="x_axis_dash")
+            
+            with col_axis2:
+                y_axis = st.selectbox(get_text("y_axis", lang), data.columns, key="y_axis_dash")
+
+            if st.button(get_text("generate_chart", lang), key="gen_chart_button"):
+                try:
+                    fig = None
+                    color_param = None if color_col == get_text("none", lang) else color_col
+                    
+                    if chart_type == "Bar":
+                        if data[x_axis]. dtype == 'object':
+                            agg_data = data. groupby(x_axis)[y_axis].mean().reset_index()
+                            fig = px.bar(agg_data, x=x_axis, y=y_axis, color=color_param)
+                        else:
+                            fig = px.bar(data, x=x_axis, y=y_axis, color=color_param)
+                    
+                    elif chart_type == "Line":
+                        fig = px.line(data, x=x_axis, y=y_axis, color=color_param)
+                    
+                    elif chart_type == "Scatter": 
+                        fig = px.scatter(data, x=x_axis, y=y_axis, color=color_param)
+                    
+                    elif chart_type == "Pie":
+                        if data[x_axis].dtype == 'object':
+                            pie_data = data.groupby(x_axis)[y_axis].sum().reset_index()
+                            fig = px.pie(pie_data, names=x_axis, values=y_axis)
+                        else:
+                            fig = px.pie(data, names=x_axis, values=y_axis)
+                    
+                    elif chart_type == "Area": 
+                        fig = px.area(data, x=x_axis, y=y_axis, color=color_param)
+                    
+                    elif chart_type == "Box":
+                        fig = px.box(data, x=x_axis, y=y_axis, color=color_param)
+                    
+                    elif chart_type == "Histogram": 
+                        fig = px.histogram(data, x=x_axis, color=color_param)
+                    
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                except Exception as e:
+                    st.error(get_text("error", lang).format(str(e)))
+
+    else:
+        st.markdown(get_text("welcome", lang))
+        st.write(get_text("get_started", lang))
